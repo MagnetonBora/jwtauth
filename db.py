@@ -18,6 +18,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(150), nullable=False, unique=True)
     password = Column(String(255), nullable=False)
+    refresh_token = Column(String(255), nullable=True)
 
     def __repr__(self):
         return f"User({self.email})"

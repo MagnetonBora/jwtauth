@@ -1,13 +1,15 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends, HTTPException, status, Security
+from fastapi.security import OAuth2PasswordRequestForm, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, get_current_user, Hash
+from auth import create_access_token, create_refresh_token, get_email_form_refresh_token, \
+    get_current_user, Hash
 from db import User, get_db
 
 app = FastAPI()
 hash_handler = Hash()
+security = HTTPBearer()
 
 
 class UserModel(BaseModel):
@@ -34,8 +36,29 @@ async def login(body: OAuth2PasswordRequestForm = Depends(), db: Session = Depen
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email")
     if not hash_handler.verify_password(body.password, user.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+    # Generate JWT
     access_token = await create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token = await create_refresh_token(data={"sub": user.email})
+    user.refresh_token = refresh_token
+    db.commit()
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+@app.get('/refresh_token')
+async def refresh_token(credentials: HTTPAuthorizationCredentials = Security(security), db: Session = Depends(get_db)):
+    token = credentials.credentials
+    email = await get_email_form_refresh_token(token)
+    user = db.query(User).filter(User.email == email).first()
+    if user.refresh_token != token:
+        user.refresh_token = None
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+    access_token = await create_access_token(data={"sub": email})
+    refresh_token = await create_refresh_token(data={"sub": email})
+    user.refresh_token = refresh_token
+    db.commit()
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
 @app.get("/")

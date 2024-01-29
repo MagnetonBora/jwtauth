@@ -23,19 +23,41 @@ class Hash:
 
 SECRET_KEY = "secret_key"
 ALGORITHM = "HS256"
-DEFAULT_TOKEN_EXPIRE_SECONDS = 15 * 60
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 
-async def create_access_token(
-    data: dict,
-    expires_delta: Optional[float] = DEFAULT_TOKEN_EXPIRE_SECONDS
-):
+async def create_access_token(data: dict, expires_delta: Optional[float] = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(seconds=expires_delta)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    if expires_delta:
+        expire = datetime.utcnow() + timedelta(seconds=expires_delta)
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"iat": datetime.utcnow(), "exp": expire, "scope": "access_token"})
+    encoded_access_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_access_token
+
+
+async def create_refresh_token(data: dict, expires_delta: Optional[float] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + timedelta(seconds=expires_delta)
+    else:
+        expire = datetime.utcnow() + timedelta(days=7)
+    to_encode.update({"iat": datetime.utcnow(), "exp": expire, "scope": "refresh_token"})
+    encoded_refresh_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_refresh_token
+
+
+async def get_email_form_refresh_token(refresh_token: str):
+    try:
+        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload['scope'] == 'refresh_token':
+            email = payload['sub']
+            return email
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid scope for token')
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Could not validate credentials')
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -47,8 +69,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload["sub"]
-        if email is None:
+        if payload['scope'] == 'access_token':
+            email = payload["sub"]
+            if email is None:
+                raise credentials_exception
+        else:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
